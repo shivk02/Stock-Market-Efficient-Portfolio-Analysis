@@ -1,0 +1,497 @@
+---
+title: "Econ 424 Project Solutions Spring 2023"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+<!-- author: Eric Zivot -->
+<!-- revision history: January 29, 2021 -->
+<!-- Updated for Spring 2023 -->
+
+# Load R packages
+
+```{r, echo = FALSE}
+options(digits=3, width=70)
+# load packages
+suppressPackageStartupMessages(library(IntroCompFinR))
+suppressPackageStartupMessages(library(PerformanceAnalytics))
+suppressPackageStartupMessages(library(quantmod))
+suppressPackageStartupMessages(library(boot))
+suppressPackageStartupMessages(library(corrplot))
+suppressPackageStartupMessages(library(xtable))
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(lubridate))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+
+# change this to the appropriate path on your computer
+savePath="C:\\Users\\ezivot\\Dropbox\\econ424\\spring2023\\Project\\"
+resetPar = par()
+```
+
+# Selecting Data
+
+For this project, everyone will be using the same data.
+
+1. US Stocks. Vanguard Total Stock Market ETF (VTI)
+2. Municipal Bonds. Vanguard Tax-Exempt Bond Index ETF (VTEB)
+3. Foreign Developed Stocks. Vanguard FTSE Developed Markets ETF (VEA)
+4. Emerging market stocks. Vanguard FTSE Emerging Markets ETF (VWO)
+5. Dividend Growth Stocks. Vanguard Dividend Appreciation ETF (VIG)
+
+The code below retrieves the data from finance.yahoo.com using the **quantmod** function `getSymbols()`. 
+```{r, echo=FALSE}
+# retrieve data for questions
+last.date = as.Date("2023-04-28")
+# last.date = Sys.Date()
+first.date = last.date - years(5)
+project.symbols = c("VTI","VTEB","VEA","VWO","VIG")
+project.prices <- 
+  getSymbols(project.symbols, src = 'yahoo', 
+             from = as.character(first.date), 
+             to = as.character(last.date),
+             auto.assign = TRUE, 
+             warnings = FALSE) %>% 
+  map(~Ad(get(.))) %>% 
+  reduce(merge) %>%
+  `colnames<-`(project.symbols)
+projectPrices = to.monthly(project.prices, OHLC=FALSE)
+print(project.prices)
+```
+
+Next calculate simple monthly returns:
+
+```{r, echo=FALSE}
+# calculate simple returns
+projectReturns = na.omit(Return.calculate(projectPrices, method = "discrete"))
+ret.mat = coredata(projectReturns)
+```
+
+
+
+# Analysis of Questions
+
+Here, you will create R code to do the analysis for the project. I provide partial R code to get you started.
+
+## Prices and Returns
+
+**Compute time plots of monthly prices and continuously compounded returns and comment.** 
+
+```{r, echo = FALSE}
+grid.arrange(
+  autoplot(projectPrices[, "VTI"]),
+  autoplot(projectPrices[, "VTEB"]),
+  autoplot(projectPrices[, "VEA"]),
+  autoplot(projectPrices[, "VWO"]),
+  autoplot(projectPrices[, "VIG"]),
+  nrow=3
+)
+```
+
+Plot returns:
+
+```{r, echo = FALSE}
+grid.arrange(
+  autoplot(projectReturns[, "VTI"]),
+  autoplot(projectReturns[, "VTEB"]),
+  autoplot(projectReturns[, "VEA"]),
+  autoplot(projectReturns[, "VWO"]),
+  autoplot(projectReturns[, "VIG"]),
+  nrow=3
+)
+```
+
+Equity curve
+
+```{r, echo = FALSE}
+chart.CumReturns(projectReturns, wealth.index=TRUE, legend.loc="topleft", 
+                 lwd=2, main="Growth of $1")
+```
+
+## Sample Statistics
+
+Here is a four panel plot:
+
+```{r, echo = FALSE}
+fourPanelPlot(projectReturns[, "VTI", drop=FALSE])
+fourPanelPlot(projectReturns[, "VTEB", drop=FALSE])
+fourPanelPlot(projectReturns[, "VEA", drop=FALSE])
+fourPanelPlot(projectReturns[, "VWO", drop=FALSE])
+fourPanelPlot(projectReturns[, "VIG", drop=FALSE])
+```
+Here is a group boxplot:
+
+```{r, echo = FALSE}
+boxplot(coredata(projectReturns), main="Vanguard Returns", col="cornflowerblue")
+```
+
+
+To compute sample statistics you can do this using `apply()` and stats functions or you can use the PerformanceAnalytics function table.Stats():
+
+Brute force:
+
+```{r, echo = FALSE}
+muhat.vals = colMeans(projectReturns)
+muhat.mat = as.matrix(muhat.vals)
+sigmahat.vals = apply(projectReturns, 2, sd)
+skew.vals = apply(projectReturns, 2, skewness)
+ekurt.vals = apply(projectReturns, 2, kurtosis)
+cov.mat = var(projectReturns)
+cor.mat = cov2cor(cov.mat)
+
+covhat.vals = cov.mat[lower.tri(cov.mat)]
+rhohat.vals = cor.mat[lower.tri(cor.mat)]
+names(covhat.vals) <- names(rhohat.vals) <- 
+  c("VTI,VTEB","VTI,VEA","VTI,VWO", "VTI,VIG",
+    "VTEB,VEA", "VTEB,VWO", "VTEB,VIG", "VEA,VWO",
+    "VEA,VIG", "VWO,VIG")
+    
+
+# empirical quantiles for VaR calculations
+q.vals = apply(projectReturns, 2, quantile, prob=c(0.01,0.05))
+
+# display results in a table
+stats.mat = rbind(muhat.vals, 
+                  sigmahat.vals,
+                  skew.vals,
+                  ekurt.vals,
+                  q.vals)
+rownames(stats.mat) = c("Mean", "Std Dev", "Skewness", 
+                        "Excess Kurtosis", "1% Quantile", 
+                        "5% Quantile")
+stats.mat
+```
+
+Or use table.Stats
+
+```{r}
+table.Stats(projectReturns)
+```
+What is interesting about this table is that the mean return is maximum in VIG and smallest in VWO. I would expect VIG to be the highest return as it is meant to be a growth index fund. The least volatile fund was VTEB, which makes sense as it is the minimum risk fund. THe highest risk is in VTI, which is bad because it does not have the highest return so it seems inefficient.
+
+
+Risk return plot
+
+```{r, echo=FALSE}
+rf = 0.02/12
+plot(sigmahat.vals, muhat.vals, xlim=c(0, 0.06), ylim=c(0, 0.015),
+     ylab="Expected Return", xlab="Standard Deviation",
+     cex=2, pch=16, col="cornflowerblue")
+points(0, rf, cex=2, pch=16, col="green")
+text(0, rf, labels="Rf", pos=3)
+text(sigmahat.vals, muhat.vals, labels=colnames(projectReturns),
+     pos=3)
+title("Risk Return Plot")
+```
+
+```{r normalness analysis}
+fourPanelPlot(projectReturns[, "VTI", drop=FALSE])
+fourPanelPlot(projectReturns[, "VTEB", drop=FALSE])
+fourPanelPlot(projectReturns[, "VWO", drop=FALSE])
+fourPanelPlot(projectReturns[, "VEA", drop=FALSE])
+fourPanelPlot(projectReturns[, "VIG", drop=FALSE])
+```
+THe data shows that VIG and VTI seem to have the least normal distribution, while VWO is the most normal.
+
+
+The monthly Sharpe ratios are:
+
+```{r, echo=FALSE}
+SharpeRatios = (muhat.vals - rf)/sigmahat.vals
+SharpeRatios = as.matrix(SharpeRatios, ncol=1)
+`colnames<-`(SharpeRatios, "Sharpe Ratio")
+
+```
+
+The following code shows how to bootstrap the Sharpe ratios and organize results. The code uses a normal bootstrap confidence interval. That may or may not be appropriate. 
+
+```{r, echo=FALSE}
+sharpeRatio.boot = function(x, idx, risk.free) {
+  muhat = mean(x[idx])
+  sigmahat = sd(x[idx])
+  sharpeRatio = (muhat - risk.free)/sigmahat
+  sharpeRatio
+}
+computeSEconfintSharpe = function(x, risk.free) {
+  Sharpe.boot = boot(x, statistic=sharpeRatio.boot, R=999, risk.free=risk.free)
+  Sharpe.hat = Sharpe.boot$t0
+  SE.Sharpe = sd(Sharpe.boot$t)
+  CI.Sharpe = boot.ci(Sharpe.boot, conf = 0.95, type="norm")$normal
+  CI.Sharpe = CI.Sharpe[-1]
+  ans = c(Sharpe.hat, SE.Sharpe, CI.Sharpe)
+  names(ans) = c("Sharpe", "SE", "LCL (0.95)", "UCL (0.95)")
+  return(ans)
+}
+set.seed(123)
+Sharpe.boot.VTI = computeSEconfintSharpe(ret.mat[, "VTI", drop=FALSE], risk.free=rf)
+Sharpe.boot.VTEB = computeSEconfintSharpe(ret.mat[, "VTEB", drop=FALSE], risk.free=rf)
+Sharpe.boot.VEA = computeSEconfintSharpe(ret.mat[, "VEA", drop=FALSE], risk.free=rf)
+Sharpe.boot.VWO = computeSEconfintSharpe(ret.mat[, "VWO", drop=FALSE], risk.free=rf)
+Sharpe.boot.VIG = computeSEconfintSharpe(ret.mat[, "VIG", drop=FALSE], risk.free=rf)
+
+Sharpe.mat = rbind(Sharpe.boot.VTI,
+                Sharpe.boot.VTEB,
+                Sharpe.boot.VEA,
+                Sharpe.boot.VWO,
+                Sharpe.boot.VIG)
+rownames(Sharpe.mat) = colnames(projectReturns)
+
+Sharpe.mat
+```
+
+
+Compute pairwise scatterplots
+
+```{r, echo=FALSE}
+pairs(coredata(projectReturns), col="blue")
+corrplot.mixed()
+```
+
+Plot correlations
+
+```{r, echo=FALSE}
+corrplot.mixed(cor.mat, upper="ellipse")
+```
+```{r bootstrap}
+y = sqrt (c(var(projectReturns$VTI),var(projectReturns$VTEB),var(projectReturns$VEA),var(projectReturns$VWO),var(projectReturns$VIG)))
+VaRNorm1 = -i * (mean(projectReturns) - z1*(y))
+VaRNorm1
+VaRNorm5 = -i * (m$er - z5*y)
+VaRNorm5
+
+
+VaR.boot = function(x, idx, p=0.05, w=100000) {
+# x     data to be resampled
+# idx		vector of scrambled indices created by boot()
+# p		  probability value for VaR calculation
+# w		  value of initial investment
+# ans		Value-at-Risk computed using resampled data
+	q = mean(x[idx]) + sd(x[idx])*qnorm(p)
+	VaR = -q*w
+	VaR
+}
+
+set.seed(123)
+VaRhat.boot = boot(projectReturns$VTEB5, statistic = VaR.boot, 
+                   R=1000)
+class(VaRhat.boot)
+
+names(VaRhat.boot)
+
+VaRhat.boot
+
+plot(VaRhat.boot)
+
+boot.ci(VaRhat.boot, conf = 0.95, type = c("norm","perc"))
+boot.ci(VaRhat.boot, conf = 0.95, type = c("norm","perc"))
+```
+
+
+
+```{r SE calcs}
+n.obs = nrow(projectReturns)
+seMuhat = sigmahat.vals/sqrt(n.obs)
+cbind(muhat.vals, seMuhat)
+
+sigma2hat = sigmahat.vals^2
+seSigma2hat = sigma2hat/sqrt(n.obs/2)
+seSigmahat = sigmahat.vals/sqrt(2*n.obs)
+
+
+rhohat = cor.mat[lower.tri(cor.mat)]
+seRhohat = (1-rhohat^2)/sqrt(n.obs)
+
+
+table = cbind(muhat.vals, seMuhat, sigma2hat, seSigma2hat, sigmahat.vals, seSigmahat, sigma2hat, seSigma2hat,rhohat.vals, seRhohat)
+table
+
+
+lowerMu = muhat.vals - 2*seMuhat
+upperMu = muhat.vals + 2*seMuhat
+widthMu = upperMu - lowerMu
+cbind(lowerMu, upperMu, widthMu)
+
+lowerSigma = sigmahat.vals - 2*seSigmahat
+upperSigma = sigmahat.vals + 2*seSigmahat
+widthSigma = upperSigma - lowerSigma
+cbind(lowerSigma, upperSigma, widthSigma)
+
+
+annualMu = muhat.vals * 12
+annualSigma = sigmahat.vals * sqrt(12)
+annual= cbind(annualMu, annualSigma)
+
+annual
+
+five_year = (annual + 1)^5
+five_year
+
+args(zoo:::rollapply.zoo)
+roll.data = merge(projectReturns)
+roll.muhat = rollapply(roll.data, width=24, by=1,
+by.column=TRUE, FUN=mean,
+align="right")
+class(roll.muhat)
+
+args(zoo:::rollapply.zoo)
+roll.data = var(projectReturns)
+roll.muhat = rollapply(roll.data, width=24, by=1,
+by.column=TRUE, FUN=mean,
+align="right")
+class(roll.muhat)
+
+rhohat = function(x) {
+corhat = cor(x)
+corhat.vals = corhat[lower.tri(corhat)]
+names(corhat.vals) = "MSFT.SP500"
+corhat.vals
+}
+roll.rhohat = rollapply(roll.data[, 1:2], width=24, FUN=rhohat, by=1, by.column=FALSE, align="right")
+
+head(roll.muhat$zoo)
+
+```
+
+```{r portfolio theory}
+x = c(0.2,0.2,0.2,0.2,0.2)
+m = getPortfolio(muhat.vals, cov(projectReturns), x)
+m
+
+annualmu = m$er * 12
+annualsig = m$sd * sqrt(12)
+
+answer<- cbind(m$er, m$sd, annualmu, annualsig)
+answer
+
+z1 = qnorm(0.005)
+z5 = qnorm(0.025)
+i = 100000
+
+VaR1 = -i * (m$er - z1*m$sd)
+VaR5 = -i * (m$er - z5*m$sd)
+
+VaR1
+VaR5
+
+gmin = globalMin.portfolio(muhat.vals, cov(projectReturns))
+gmin
+
+annualmu.gmin = gmin$er * 12
+annualsig.gmin = gmin$sd * sqrt(12)
+
+answer.gmin <- cbind(gmin$er, gmin$sd, annualmu.gmin, annualsig.gmin)
+answer.gmin
+
+VaR1.gmin = -i * (gmin$er - z1*gmin$sd)
+VaR5.gmin = -i * (gmin$er - z5*gmin$sd)
+
+VaR1.gmin
+VaR5.gmin
+
+ef = efficient.frontier(muhat.vals, cov(projectReturns))
+ef
+plot(ef$sd,ef$er, xlab = "Volatility", ylab = "Return", xlim=c(0, 0.06), ylim=c(0, 0.015))
+text(sigmahat.vals, muhat.vals, labels=colnames(projectReturns), pos=3)
+points(m$sd, m$er, pch = 16, col = "blue")
+title("Efficient Frontiers")
+
+efficient.portfolio(muhat.vals, cov(projectReturns), m$er)
+
+
+tt = tangency.portfolio(muhat.vals, cov(projectReturns), 0.00167)
+tt
+ttSharpe = (tt$er-0.00167)/tt$sd
+ttSharpe
+
+plot(ef$sd,ef$er, xlab = "Volatility", ylab = "Return", xlim=c(0, 0.06), ylim=c(0, 0.015))
+text(sigmahat.vals, muhat.vals, labels=colnames(projectReturns), pos=3)
+text(0,0.00167, "rf")
+abline(0.00167, 0.285, col = "blue")
+title("Efficient Frontiers with Tangency Portfolios")
+gminf = globalMin.portfolio(muhat.vals, cov(projectReturns), shorts = FALSE)
+gminf
+
+annualmu.gminf = gminf$er * 12
+annualsig.gminf = gminf$sd * sqrt(12)
+
+answer.gminf <- cbind(gminf$er, gminf$sd, annualmu.gminf, annualsig.gminf)
+answer.gminf
+
+VaR1.gminf = -i * (gminf$er - z1*gminf$sd)
+VaR5.gminf = -i * (gminf$er - z5*gminf$sd)
+
+VaR1.gminf
+VaR5.gminf
+
+efficient.portfolio(muhat.vals, cov(projectReturns),target.return = 0.005, shorts = FALSE)
+efficient.portfolio(muhat.vals, cov(projectReturns),target.return = 0.005)
+
+eff = efficient.frontier(muhat.vals, cov(projectReturns), shorts = FALSE)
+eff
+plot(eff$sd,eff$er, xlab = "Volatility", ylab = "Return", xlim=c(0, 0.06), ylim=c(0, 0.015))
+text(sigmahat.vals, muhat.vals, labels=colnames(projectReturns), pos=3)
+points(ef$sd,ef$er, pch = 16, col = "orange")
+points(gmin$sd, gmin$er, pch = 16, col = "green")
+points(m$sd, m$er, pch = 16, col = "blue")
+title("Efficient Frontiers with and without Short Sales")
+
+tangency.portfolio(muhat.vals, cov(projectReturns), 0.00167, shorts = FALSE)
+```
+
+```{r risk budgeting}
+sigma.mat = cov(projectReturns)
+sigmahat = sigmahat.vals
+
+names(muhat.vals) = c("VTI", "VTEB", "VEA", "VWO", "VIG")
+proportion = matrix(c(0.2, 0.2, 0.2, 0.2, 0.2), ncol = 1)
+names(proportion) = c("VTI", "VTEB", "VEA", "VWO", "VIG")
+value_invested = 100000
+x_i = 1 / length(muhat.vals) #equally weighted
+portfolio_return = crossprod(muhat.vals, proportion)
+portfolio_return
+
+portfolio_risk = t(proportion) %*% sigma.mat %*% proportion
+portfolio_risk
+
+x = rep(1/5, 5)
+d = value_invested * x
+mu.px = as.numeric(crossprod(x, muhat.vals))
+sig.px = as.numeric(sqrt(t(x)%*%sigma.mat%*%x))
+MCR.vol.x = (sigma.mat%*%x)/sig.px
+CR.vol.x = x*MCR.vol.x
+PCR.vol.x = CR.vol.x/sig.px
+Asset_Corr = MCR.vol.x/sigmahat
+Asset_Beta = PCR.vol.x/x
+
+riskReportVol.px = cbind(d, x, sigmahat, MCR.vol.x, CR.vol.x,
+PCR.vol.x, Asset_Corr, Asset_Beta)
+PORT = c(value_invested, 1, NA, NA, sum(CR.vol.x), sum(PCR.vol.x), 1, 1)
+riskReportVol.px = rbind(riskReportVol.px, PORT)
+colnames(riskReportVol.px) = c("Dollar", "Weight", "Vol",
+"MCR", "CR", "PCR", "Asset Corr (rho)", "Asset Beta")
+riskReportVol.px
+```
+
+```{r asset allocation}
+ef6 = efficient.portfolio(muhat.vals, cov(projectReturns), 0.009, shorts = FALSE)
+ef6
+
+VaR1.ef6 = -i * (ef6$er - z1*ef6$sd)
+VaR5.ef6 = -i * (ef6$er - z5*ef6$sd)
+VaR1.ef6
+VaR5.ef6
+
+ef6Sharpe = (tt$er-0.00167)/tt$sd
+ef6Sharpe
+
+tt2 = tangency.portfolio(muhat.vals, cov(projectReturns), 0.00167, shorts = FALSE)
+tt2
+tt2Sharpe = (tt$er-0.00167)/tt$sd
+tt2Sharpe4
+
+
+-i * (0.005 - z1*0.0185)
+-i * (0.005 - z5*0.0185)
+```
